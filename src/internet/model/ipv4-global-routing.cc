@@ -27,11 +27,13 @@
 #include "ns3/ipv4-route.h"
 #include "ns3/ipv4-routing-table-entry.h"
 #include "ns3/boolean.h"
+#include "ns3/double.h"
 #include "ns3/node.h"
+#include "ns3/flowlet.h"
 #include "ipv4-global-routing.h"
 #include "global-route-manager.h"
-#include "ns3/flow-id-tag.h"
-#include "ns3/hash.h"
+#include "tcp-header.h"
+#include "udp-header.h"
 
 namespace ns3 {
 
@@ -39,9 +41,9 @@ NS_LOG_COMPONENT_DEFINE ("Ipv4GlobalRouting");
 
 NS_OBJECT_ENSURE_REGISTERED (Ipv4GlobalRouting);
 
-TypeId
+TypeId 
 Ipv4GlobalRouting::GetTypeId (void)
-{
+{ 
   static TypeId tid = TypeId ("ns3::Ipv4GlobalRouting")
     .SetParent<Object> ()
     .SetGroupName ("Internet")
@@ -50,23 +52,33 @@ Ipv4GlobalRouting::GetTypeId (void)
                    BooleanValue (false),
                    MakeBooleanAccessor (&Ipv4GlobalRouting::m_randomEcmpRouting),
                    MakeBooleanChecker ())
-    .AddAttribute("PerflowEcmpRouting",
-                  "Set to true if flow are randomly routed among ECMP",
-                   BooleanValue (false),
-                   MakeBooleanAccessor (&Ipv4GlobalRouting::m_perFlowEcmpRouting),
-                   MakeBooleanChecker ())
+    .AddAttribute("HeavyHitterRouting",
+        "Set to true if packets are routed through Heavy Hitters; set to false for using only one route consistently",
+        BooleanValue(false),
+        MakeBooleanAccessor(&Ipv4GlobalRouting::m_heavy_hitter_routing),
+        MakeBooleanChecker())
     .AddAttribute ("RespondToInterfaceEvents",
                    "Set to true if you want to dynamically recompute the global routes upon Interface notification events (up/down, or add/remove address)",
                    BooleanValue (false),
                    MakeBooleanAccessor (&Ipv4GlobalRouting::m_respondToInterfaceEvents),
                    MakeBooleanChecker ())
+      .AddAttribute("flowletInterval",
+          "Set the flowlet interval value.",
+          DoubleValue(FLOWLET_INTERVAL),
+          MakeDoubleAccessor(&Ipv4GlobalRouting::m_flowlet_interval),
+          MakeDoubleChecker<double>())
+      .AddAttribute("heavyHittersThreshold",
+          "Set the Heavy Hitters threshold value.",
+          DoubleValue(HEAVY_HITTERS_THRESHOLD),
+          MakeDoubleAccessor(&Ipv4GlobalRouting::m_heavy_hitters_threshold),
+          MakeDoubleChecker<double>())
   ;
   return tid;
 }
 
-Ipv4GlobalRouting::Ipv4GlobalRouting ()
-  : m_randomEcmpRouting (false),
-    m_perFlowEcmpRouting (false),
+Ipv4GlobalRouting::Ipv4GlobalRouting()
+    : m_randomEcmpRouting(false),
+    m_heavy_hitter_routing(false),
     m_respondToInterfaceEvents (false)
 {
   NS_LOG_FUNCTION (this);
@@ -79,9 +91,9 @@ Ipv4GlobalRouting::~Ipv4GlobalRouting ()
   NS_LOG_FUNCTION (this);
 }
 
-void
-Ipv4GlobalRouting::AddHostRouteTo (Ipv4Address dest,
-                                   Ipv4Address nextHop,
+void 
+Ipv4GlobalRouting::AddHostRouteTo (Ipv4Address dest, 
+                                   Ipv4Address nextHop, 
                                    uint32_t interface)
 {
   NS_LOG_FUNCTION (this << dest << nextHop << interface);
@@ -90,8 +102,8 @@ Ipv4GlobalRouting::AddHostRouteTo (Ipv4Address dest,
   m_hostRoutes.push_back (route);
 }
 
-void
-Ipv4GlobalRouting::AddHostRouteTo (Ipv4Address dest,
+void 
+Ipv4GlobalRouting::AddHostRouteTo (Ipv4Address dest, 
                                    uint32_t interface)
 {
   NS_LOG_FUNCTION (this << dest << interface);
@@ -100,10 +112,10 @@ Ipv4GlobalRouting::AddHostRouteTo (Ipv4Address dest,
   m_hostRoutes.push_back (route);
 }
 
-void
-Ipv4GlobalRouting::AddNetworkRouteTo (Ipv4Address network,
-                                      Ipv4Mask networkMask,
-                                      Ipv4Address nextHop,
+void 
+Ipv4GlobalRouting::AddNetworkRouteTo (Ipv4Address network, 
+                                      Ipv4Mask networkMask, 
+                                      Ipv4Address nextHop, 
                                       uint32_t interface)
 {
   NS_LOG_FUNCTION (this << network << networkMask << nextHop << interface);
@@ -115,9 +127,9 @@ Ipv4GlobalRouting::AddNetworkRouteTo (Ipv4Address network,
   m_networkRoutes.push_back (route);
 }
 
-void
-Ipv4GlobalRouting::AddNetworkRouteTo (Ipv4Address network,
-                                      Ipv4Mask networkMask,
+void 
+Ipv4GlobalRouting::AddNetworkRouteTo (Ipv4Address network, 
+                                      Ipv4Mask networkMask, 
                                       uint32_t interface)
 {
   NS_LOG_FUNCTION (this << network << networkMask << interface);
@@ -128,8 +140,8 @@ Ipv4GlobalRouting::AddNetworkRouteTo (Ipv4Address network,
   m_networkRoutes.push_back (route);
 }
 
-void
-Ipv4GlobalRouting::AddASExternalRouteTo (Ipv4Address network,
+void 
+Ipv4GlobalRouting::AddASExternalRouteTo (Ipv4Address network, 
                                          Ipv4Mask networkMask,
                                          Ipv4Address nextHop,
                                          uint32_t interface)
@@ -145,8 +157,9 @@ Ipv4GlobalRouting::AddASExternalRouteTo (Ipv4Address network,
 
 
 Ptr<Ipv4Route>
-Ipv4GlobalRouting::LookupGlobal (Ipv4Address dest, Ptr<Packet> packet, const Ipv4Header &header, uint32_t flowId, Ptr<NetDevice> oif)
+Ipv4GlobalRouting::LookupGlobal (Flowlet *flowlet, Ptr<NetDevice> oif)
 {
+  Ipv4Address dest = flowlet->getM_dst_address();
   NS_LOG_FUNCTION (this << dest << oif);
   NS_LOG_LOGIC ("Looking for route for destination " << dest);
   Ptr<Ipv4Route> rtentry = 0;
@@ -155,9 +168,9 @@ Ipv4GlobalRouting::LookupGlobal (Ipv4Address dest, Ptr<Packet> packet, const Ipv
   RouteVec_t allRoutes;
 
   NS_LOG_LOGIC ("Number of m_hostRoutes = " << m_hostRoutes.size ());
-  for (HostRoutesCI i = m_hostRoutes.begin ();
-       i != m_hostRoutes.end ();
-       i++)
+  for (HostRoutesCI i = m_hostRoutes.begin (); 
+       i != m_hostRoutes.end (); 
+       i++) 
     {
       NS_ASSERT ((*i)->IsHost ());
       if ((*i)->GetDest ().IsEqual (dest))
@@ -171,15 +184,15 @@ Ipv4GlobalRouting::LookupGlobal (Ipv4Address dest, Ptr<Packet> packet, const Ipv
                 }
             }
           allRoutes.push_back (*i);
-          NS_LOG_LOGIC (allRoutes.size () << "Found global host route" << *i);
+          NS_LOG_LOGIC (allRoutes.size () << "Found global host route" << *i); 
         }
     }
   if (allRoutes.size () == 0) // if no host route is found
     {
       NS_LOG_LOGIC ("Number of m_networkRoutes" << m_networkRoutes.size ());
-      for (NetworkRoutesI j = m_networkRoutes.begin ();
-           j != m_networkRoutes.end ();
-           j++)
+      for (NetworkRoutesI j = m_networkRoutes.begin (); 
+           j != m_networkRoutes.end (); 
+           j++) 
         {
           Ipv4Mask mask = (*j)->GetDestNetworkMask ();
           Ipv4Address entry = (*j)->GetDestNetwork ();
@@ -230,22 +243,64 @@ Ipv4GlobalRouting::LookupGlobal (Ipv4Address dest, Ptr<Packet> packet, const Ipv
       uint32_t selectIndex;
       if (m_randomEcmpRouting)
         {
-          selectIndex = m_rand->GetInteger (0, allRoutes.size ()-1);
+          //selectIndex = m_rand->GetInteger (0, allRoutes.size ()-1);
+          auto routeSize = (uint32_t)allRoutes.size ();
+          selectIndex = flowlet->getHash()%routeSize;
+
         }
-      else if (m_perFlowEcmpRouting && flowId != 0) // If the flow id is 0, it may be the socket setup endpoint request, we simply return the first
-        {                                           // available route to indicate the address is not local
-          std::stringstream hash_string;
-          hash_string << flowId;
-          hash_string << header.GetTtl ();
-          uint32_t hashPerturbe = Hash32 (hash_string.str ()); // Hash Perturbe
-          selectIndex = hashPerturbe % allRoutes.size();
-          NS_LOG_LOGIC ("Per flow ECMP is enabled, select index: " << selectIndex << " for flow: " << flowId);
-        }
-      else
+      else if (m_heavy_hitter_routing) {
+          auto routeSize = (uint32_t)allRoutes.size();
+          selectIndex = flowlet->getHash() % routeSize;
+
+          if (routeSize > 1) {
+
+              if (IsFlowletHeavyHitter(flowlet))
+              {
+                  uint32_t lowest_heavy_hitter = MAX_INT_VALUE;
+                  int32_t out_interface = GetFlowletOutPort(flowlet);
+                  bool updateMapDb = false;
+
+
+                  for (uint32_t i = 0; i < allRoutes.size(); i++)
+                  {
+                      Ipv4RoutingTableEntry* route = allRoutes.at(i);
+                      uint32_t heavy_hitters_on_links = GetHeavyHittersOnLink(route->GetInterface());
+
+                      if (out_interface == -1)
+                      {
+                          if (heavy_hitters_on_links < lowest_heavy_hitter)
+                          {
+                              lowest_heavy_hitter = heavy_hitters_on_links;
+                              selectIndex = i;
+                              out_interface = route->GetInterface();
+                              flowlet->setLast_out_interface(out_interface);
+                              updateMapDb = true;
+                          }
+                      }
+                      else {
+                          if ((uint32_t)out_interface == route->GetInterface())
+                          {
+                              selectIndex = i;
+                          }
+                      }
+
+                  }
+
+                  if (updateMapDb)
+                  {
+                      m_heavy_hitters_on_link_map[(uint32_t)out_interface]++;
+                  }
+              }
+              
+          }
+          
+          AddOrUpdateFlowlet(flowlet);
+      }
+      else 
         {
           selectIndex = 0;
         }
-      Ipv4RoutingTableEntry* route = allRoutes.at (selectIndex);
+      Ipv4RoutingTableEntry* route = allRoutes.at (selectIndex); 
       // create a Ipv4Route object from the selected routing table entry
       rtentry = Create<Ipv4Route> ();
       rtentry->SetDestination (route->GetDest ());
@@ -256,13 +311,13 @@ Ipv4GlobalRouting::LookupGlobal (Ipv4Address dest, Ptr<Packet> packet, const Ipv
       rtentry->SetOutputDevice (m_ipv4->GetNetDevice (interfaceIdx));
       return rtentry;
     }
-  else
+  else 
     {
       return 0;
     }
 }
 
-uint32_t
+uint32_t 
 Ipv4GlobalRouting::GetNRoutes (void) const
 {
   NS_LOG_FUNCTION (this);
@@ -280,9 +335,9 @@ Ipv4GlobalRouting::GetRoute (uint32_t index) const
   if (index < m_hostRoutes.size ())
     {
       uint32_t tmp = 0;
-      for (HostRoutesCI i = m_hostRoutes.begin ();
-           i != m_hostRoutes.end ();
-           i++)
+      for (HostRoutesCI i = m_hostRoutes.begin (); 
+           i != m_hostRoutes.end (); 
+           i++) 
         {
           if (tmp  == index)
             {
@@ -295,7 +350,7 @@ Ipv4GlobalRouting::GetRoute (uint32_t index) const
   uint32_t tmp = 0;
   if (index < m_networkRoutes.size ())
     {
-      for (NetworkRoutesCI j = m_networkRoutes.begin ();
+      for (NetworkRoutesCI j = m_networkRoutes.begin (); 
            j != m_networkRoutes.end ();
            j++)
         {
@@ -308,9 +363,9 @@ Ipv4GlobalRouting::GetRoute (uint32_t index) const
     }
   index -= m_networkRoutes.size ();
   tmp = 0;
-  for (ASExternalRoutesCI k = m_ASexternalRoutes.begin ();
-       k != m_ASexternalRoutes.end ();
-       k++)
+  for (ASExternalRoutesCI k = m_ASexternalRoutes.begin (); 
+       k != m_ASexternalRoutes.end (); 
+       k++) 
     {
       if (tmp == index)
         {
@@ -322,16 +377,16 @@ Ipv4GlobalRouting::GetRoute (uint32_t index) const
   // quiet compiler.
   return 0;
 }
-void
+void 
 Ipv4GlobalRouting::RemoveRoute (uint32_t index)
 {
   NS_LOG_FUNCTION (this << index);
   if (index < m_hostRoutes.size ())
     {
       uint32_t tmp = 0;
-      for (HostRoutesI i = m_hostRoutes.begin ();
-           i != m_hostRoutes.end ();
-           i++)
+      for (HostRoutesI i = m_hostRoutes.begin (); 
+           i != m_hostRoutes.end (); 
+           i++) 
         {
           if (tmp  == index)
             {
@@ -346,9 +401,9 @@ Ipv4GlobalRouting::RemoveRoute (uint32_t index)
     }
   index -= m_hostRoutes.size ();
   uint32_t tmp = 0;
-  for (NetworkRoutesI j = m_networkRoutes.begin ();
-       j != m_networkRoutes.end ();
-       j++)
+  for (NetworkRoutesI j = m_networkRoutes.begin (); 
+       j != m_networkRoutes.end (); 
+       j++) 
     {
       if (tmp == index)
         {
@@ -362,7 +417,7 @@ Ipv4GlobalRouting::RemoveRoute (uint32_t index)
     }
   index -= m_networkRoutes.size ();
   tmp = 0;
-  for (ASExternalRoutesI k = m_ASexternalRoutes.begin ();
+  for (ASExternalRoutesI k = m_ASexternalRoutes.begin (); 
        k != m_ASexternalRoutes.end ();
        k++)
     {
@@ -391,24 +446,33 @@ void
 Ipv4GlobalRouting::DoDispose (void)
 {
   NS_LOG_FUNCTION (this);
-  for (HostRoutesI i = m_hostRoutes.begin ();
-       i != m_hostRoutes.end ();
-       i = m_hostRoutes.erase (i))
+  for (HostRoutesI i = m_hostRoutes.begin (); 
+       i != m_hostRoutes.end (); 
+       i = m_hostRoutes.erase (i)) 
     {
       delete (*i);
     }
-  for (NetworkRoutesI j = m_networkRoutes.begin ();
-       j != m_networkRoutes.end ();
-       j = m_networkRoutes.erase (j))
+  for (NetworkRoutesI j = m_networkRoutes.begin (); 
+       j != m_networkRoutes.end (); 
+       j = m_networkRoutes.erase (j)) 
     {
       delete (*j);
     }
-  for (ASExternalRoutesI l = m_ASexternalRoutes.begin ();
+  for (ASExternalRoutesI l = m_ASexternalRoutes.begin (); 
        l != m_ASexternalRoutes.end ();
        l = m_ASexternalRoutes.erase (l))
     {
       delete (*l);
     }
+
+  for (FlowletListI j = m_flowlet_list.begin();
+      j != m_flowlet_list.end();
+      j = m_flowlet_list.erase(j))
+  {
+      delete (*j);
+  }
+
+  m_heavy_hitters_on_link_map.clear();
 
   Ipv4RoutingProtocol::DoDispose ();
 }
@@ -421,8 +485,6 @@ Ipv4GlobalRouting::PrintRoutingTable (Ptr<OutputStreamWrapper> stream) const
   std::ostream* os = stream->GetStream ();
 
   *os << "Node: " << m_ipv4->GetObject<Node> ()->GetId ()
-      << ", Time: " << Now().As (Time::S)
-      << ", Local time: " << GetObject<Node> ()->GetLocalTime ().As (Time::S)
       << ", Ipv4GlobalRouting table" << std::endl;
 
   if (GetNRoutes () > 0)
@@ -472,18 +534,6 @@ Ptr<Ipv4Route>
 Ipv4GlobalRouting::RouteOutput (Ptr<Packet> p, const Ipv4Header &header, Ptr<NetDevice> oif, Socket::SocketErrno &sockerr)
 {
   NS_LOG_FUNCTION (this << p << &header << oif << &sockerr);
-
-  uint32_t flowId = 0;
-  if (m_perFlowEcmpRouting && p != NULL) {
-    NS_ASSERT(m_randomEcmpRouting == false);
-    FlowIdTag flowIdTag;
-    bool found = p->PeekPacketTag(flowIdTag);
-    if (found)
-    {
-      flowId = flowIdTag.GetFlowId();
-    }
-  }
-
 //
 // First, see if this is a multicast packet we have a route for.  If we
 // have a route, then send the packet down each of the specified interfaces.
@@ -497,7 +547,30 @@ Ipv4GlobalRouting::RouteOutput (Ptr<Packet> p, const Ipv4Header &header, Ptr<Net
 // See if this is a unicast packet we have a route for.
 //
   NS_LOG_LOGIC ("Unicast destination- looking up");
-  Ptr<Ipv4Route> rtentry = LookupGlobal (header.GetDestination (), p, header, flowId, oif);
+
+  uint8_t prot = header.GetProtocol ();
+  uint16_t fragOffset = header.GetFragmentOffset ();
+
+  TcpHeader tcpHdr;
+  UdpHeader udpHdr;
+  uint16_t srcPort = 0;
+  uint16_t destPort = 0;
+
+  if (prot == 6 && fragOffset == 0) // TCP
+  {
+    p->PeekHeader (tcpHdr);
+    srcPort = tcpHdr.GetSourcePort ();
+    destPort = tcpHdr.GetDestinationPort ();
+  }
+  else if (prot == 17 && fragOffset == 0) // UDP
+  {
+    p->PeekHeader (udpHdr);
+    srcPort = udpHdr.GetSourcePort ();
+    destPort = udpHdr.GetDestinationPort ();
+  }
+
+  Flowlet *flowlet = new Flowlet(header.GetSource(), header.GetDestination(), header.GetProtocol(),srcPort,destPort);
+  Ptr<Ipv4Route> rtentry = LookupGlobal (flowlet, oif);
   if (rtentry)
     {
       sockerr = Socket::ERROR_NOTERROR;
@@ -506,31 +579,19 @@ Ipv4GlobalRouting::RouteOutput (Ptr<Packet> p, const Ipv4Header &header, Ptr<Net
     {
       sockerr = Socket::ERROR_NOROUTETOHOST;
     }
+
+  delete flowlet;
   return rtentry;
 }
 
-bool
-Ipv4GlobalRouting::RouteInput  (Ptr<const Packet> packet, const Ipv4Header &header, Ptr<const NetDevice> idev,
-                                UnicastForwardCallback ucb, MulticastForwardCallback mcb,
+bool 
+Ipv4GlobalRouting::RouteInput  (Ptr<const Packet> p, const Ipv4Header &header, Ptr<const NetDevice> idev,                             UnicastForwardCallback ucb, MulticastForwardCallback mcb,
                                 LocalDeliverCallback lcb, ErrorCallback ecb)
-{
-  NS_LOG_FUNCTION (this << packet << header << header.GetSource () << header.GetDestination () << idev << &lcb << &ecb);
+{ 
+  NS_LOG_FUNCTION (this << p << header << header.GetSource () << header.GetDestination () << idev << &lcb << &ecb);
   // Check if input device supports IP
   NS_ASSERT (m_ipv4->GetInterfaceForDevice (idev) >= 0);
   uint32_t iif = m_ipv4->GetInterfaceForDevice (idev);
-
-  Ptr<Packet> p = ConstCast<Packet> (packet);
-
-  uint32_t flowId = 0;
-    if (m_perFlowEcmpRouting && p != NULL) {
-      NS_ASSERT(m_randomEcmpRouting == false);
-      FlowIdTag flowIdTag;
-      bool found = p->PeekPacketTag(flowIdTag);
-      if (found)
-      {
-        flowId = flowIdTag.GetFlowId();
-      }
-    }
 
   if (m_ipv4->IsDestinationAddress (header.GetDestination (), iif))
     {
@@ -556,11 +617,38 @@ Ipv4GlobalRouting::RouteInput  (Ptr<const Packet> packet, const Ipv4Header &head
     {
       NS_LOG_LOGIC ("Forwarding disabled for this interface");
       ecb (p, header, Socket::ERROR_NOROUTETOHOST);
-      return false;
+      return true;
     }
   // Next, try to find a route
   NS_LOG_LOGIC ("Unicast destination- looking up global route");
-  Ptr<Ipv4Route> rtentry = LookupGlobal (header.GetDestination (), p, header, flowId);
+
+  uint8_t prot = header.GetProtocol ();
+  uint16_t fragOffset = header.GetFragmentOffset ();
+
+  TcpHeader tcpHdr;
+  UdpHeader udpHdr;
+  uint16_t srcPort = 0;
+  uint16_t destPort = 0;
+
+  if (prot == 6 && fragOffset == 0) // TCP
+  {
+    p->PeekHeader (tcpHdr);
+    srcPort = tcpHdr.GetSourcePort ();
+    destPort = tcpHdr.GetDestinationPort ();
+  }
+  else if (prot == 17 && fragOffset == 0) // UDP
+  {
+    p->PeekHeader (udpHdr);
+    srcPort = udpHdr.GetSourcePort ();
+    destPort = udpHdr.GetDestinationPort ();
+  }
+
+  Flowlet *flowlet = new Flowlet(header.GetSource(), header.GetDestination(), header.GetProtocol(),srcPort,destPort);
+
+  Ptr<Ipv4Route> rtentry = LookupGlobal (flowlet);
+
+  delete flowlet;
+
   if (rtentry != 0)
     {
       NS_LOG_LOGIC ("Found unicast destination- calling unicast callback");
@@ -574,7 +662,102 @@ Ipv4GlobalRouting::RouteInput  (Ptr<const Packet> packet, const Ipv4Header &head
                     // route request.
     }
 }
-void
+
+uint32_t Ipv4GlobalRouting::GetHeavyHittersOnLink(uint32_t ipv4_interface) {
+
+    for (HeavyHitterMapI iter = m_heavy_hitters_on_link_map.begin(); iter != m_heavy_hitters_on_link_map.end(); iter++) {
+        if (iter->first == ipv4_interface) {
+            return iter->second;
+        }
+    }
+
+    return 0;
+}
+
+bool Ipv4GlobalRouting::IsFlowletHeavyHitter(Flowlet *flowlet) {
+
+    Flowlet *databaseFlowlet = GetFlowlet(flowlet->getHash());
+
+    double current_time = flowlet->getLastSeenTime().GetSeconds();
+
+    if (databaseFlowlet != nullptr) {
+
+        double last_seen_time = databaseFlowlet->getLastSeenTime().GetSeconds();
+        uint32_t old_flow_size = databaseFlowlet->getLast_flow_size();
+        uint32_t current_flow_size = databaseFlowlet->get_current_flow_size() + flowlet->get_current_flow_size();
+        
+        if (current_time - last_seen_time > m_flowlet_interval) {
+            double average_throughput = (current_flow_size - old_flow_size) /
+                (current_time - last_seen_time);
+
+            databaseFlowlet->set_last_flow_size(current_flow_size);
+
+            if (average_throughput > LINK_BANDWIDTH * m_heavy_hitters_threshold) {
+
+                return true;
+            
+            }
+        }
+    }
+
+    return false;
+}
+
+Flowlet *Ipv4GlobalRouting::GetFlowlet(uint32_t hash) {
+
+    NS_LOG_FUNCTION(this << hash);
+
+    if (m_flowlet_list.size() > 0)
+    {
+        for (FlowletListI j = m_flowlet_list.begin();
+            j != m_flowlet_list.end();
+            j++)
+        {
+            if ((*j)->getHash() == hash)
+            {
+                return *j;
+            }
+        }
+    }
+
+    return nullptr;
+}
+
+int32_t Ipv4GlobalRouting::GetFlowletOutPort(Flowlet * flowlet)
+{
+
+    Flowlet *databaseFlowlet = GetFlowlet(flowlet->getHash());
+
+    if (databaseFlowlet != nullptr) {
+
+        return databaseFlowlet->getLast_out_interface();
+    }
+
+    return -1;
+}
+
+void Ipv4GlobalRouting::AddOrUpdateFlowlet(Flowlet *flowlet) {
+
+    Flowlet *databaseFlowlet = GetFlowlet(flowlet->getHash());
+
+    if (databaseFlowlet != nullptr) {
+
+        uint32_t current_flow_size = flowlet->get_current_flow_size();
+        uint32_t old_flow_size = databaseFlowlet->get_current_flow_size();
+
+        databaseFlowlet->set_current_flow_size(current_flow_size + old_flow_size);
+        databaseFlowlet->setLastSeenTime(flowlet->getLastSeenTime());
+        databaseFlowlet->setLast_out_interface(flowlet->getLast_out_interface());
+
+    }
+    else {
+        Flowlet *copyFlowlet = new Flowlet(flowlet);
+        m_flowlet_list.push_back(copyFlowlet);
+    }
+
+}
+
+void 
 Ipv4GlobalRouting::NotifyInterfaceUp (uint32_t i)
 {
   NS_LOG_FUNCTION (this << i);
@@ -586,7 +769,7 @@ Ipv4GlobalRouting::NotifyInterfaceUp (uint32_t i)
     }
 }
 
-void
+void 
 Ipv4GlobalRouting::NotifyInterfaceDown (uint32_t i)
 {
   NS_LOG_FUNCTION (this << i);
@@ -598,7 +781,7 @@ Ipv4GlobalRouting::NotifyInterfaceDown (uint32_t i)
     }
 }
 
-void
+void 
 Ipv4GlobalRouting::NotifyAddAddress (uint32_t interface, Ipv4InterfaceAddress address)
 {
   NS_LOG_FUNCTION (this << interface << address);
@@ -610,7 +793,7 @@ Ipv4GlobalRouting::NotifyAddAddress (uint32_t interface, Ipv4InterfaceAddress ad
     }
 }
 
-void
+void 
 Ipv4GlobalRouting::NotifyRemoveAddress (uint32_t interface, Ipv4InterfaceAddress address)
 {
   NS_LOG_FUNCTION (this << interface << address);
@@ -622,12 +805,13 @@ Ipv4GlobalRouting::NotifyRemoveAddress (uint32_t interface, Ipv4InterfaceAddress
     }
 }
 
-void
+void 
 Ipv4GlobalRouting::SetIpv4 (Ptr<Ipv4> ipv4)
 {
   NS_LOG_FUNCTION (this << ipv4);
   NS_ASSERT (m_ipv4 == 0 && ipv4 != 0);
   m_ipv4 = ipv4;
 }
+
 
 } // namespace ns3

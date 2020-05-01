@@ -88,6 +88,9 @@ public:
    * \return The Ipv4 interface number used for sending outgoing packets
    */
   uint32_t GetInterface (void) const;
+
+  void SetInterface(uint32_t);
+
   /**
    * \return An Ipv4RoutingTableEntry object corresponding to the input parameters.
    * \param dest Ipv4Address of the destination

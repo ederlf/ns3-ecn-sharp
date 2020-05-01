@@ -168,6 +168,11 @@ Ipv4RoutingTableEntry::GetInterface (void) const
   return m_interface;
 }
 
+void 
+Ipv4RoutingTableEntry::SetInterface (uint32_t interface){
+    m_interface = interface;
+}
+
 Ipv4RoutingTableEntry 
 Ipv4RoutingTableEntry::CreateHostRouteTo (Ipv4Address dest, 
                                           Ipv4Address nextHop,
