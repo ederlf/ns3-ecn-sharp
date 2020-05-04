@@ -28,6 +28,7 @@
 #include "ns3/packet-sink.h"
 #include "ns3/rpc-application.h"
 #include "ns3/simulator.h"
+#include "ns3/string.h"
 // An essential include is test.h
 #include "ns3/test.h"
 #include <iostream>
@@ -749,6 +750,8 @@ void HULATestRPCGenerator::DoRun(void) {
     NodeContainer hostContainer;
     hostContainer.Create(2);
     PointToPointHelper channel1;
+
+    Config::SetDefault ("ns3::TcpL4Protocol::SocketType", StringValue ("ns3::TcpDCTCP"));
 
     channel1.SetDeviceAttribute ("DataRate", DataRateValue (DataRate ("100Mbps")));
     channel1.SetChannelAttribute ("Delay", TimeValue (MilliSeconds (2)));
