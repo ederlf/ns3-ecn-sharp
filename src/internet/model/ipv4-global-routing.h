@@ -31,6 +31,11 @@
 
 namespace ns3 {
 
+#define LINK_BANDWIDTH 40000000000
+#define FLOWLET_INTERVAL 0.0001
+#define HEAVY_HITTERS_THRESHOLD 0.01
+#define MAX_INT_VALUE (1<<30)
+
 class Packet;
 class NetDevice;
 class Ipv4Interface;
@@ -39,22 +44,25 @@ class Ipv4Header;
 class Ipv4RoutingTableEntry;
 class Ipv4MulticastRoutingTableEntry;
 class Node;
+class Flowlet;
 
 
 /**
- * \brief Global routing protocol for IP version 4 stacks.
+ * \ingroup ipv4
+ *
+ * \brief Global routing protocol for IPv4 stacks.
  *
  * In ns-3 we have the concept of a pluggable routing protocol.  Routing
- * protocols are added to a list maintained by the Ipv4L3Protocol.  Every
+ * protocols are added to a list maintained by the Ipv4L3Protocol.  Every 
  * stack gets one routing protocol for free -- the Ipv4StaticRouting routing
- * protocol is added in the constructor of the Ipv4L3Protocol (this is the
+ * protocol is added in the constructor of the Ipv4L3Protocol (this is the 
  * piece of code that implements the functionality of the IP layer).
  *
  * As an option to running a dynamic routing protocol, a GlobalRouteManager
  * object has been created to allow users to build routes for all participating
  * nodes.  One can think of this object as a "routing oracle"; it has
  * an omniscient view of the topology, and can construct shortest path
- * routes between all pairs of nodes.  These routes must be stored
+ * routes between all pairs of nodes.  These routes must be stored 
  * somewhere in the node, so therefore this class Ipv4GlobalRouting
  * is used as one of the pluggable routing protocols.  It is kept distinct
  * from Ipv4StaticRouting because these routes may be dynamically cleared
@@ -108,8 +116,8 @@ public:
    *
    * \see Ipv4Address
    */
-  void AddHostRouteTo (Ipv4Address dest,
-                       Ipv4Address nextHop,
+  void AddHostRouteTo (Ipv4Address dest, 
+                       Ipv4Address nextHop, 
                        uint32_t interface);
   /**
    * \brief Add a host route to the global routing table.
@@ -120,7 +128,7 @@ public:
    *
    * \see Ipv4Address
    */
-  void AddHostRouteTo (Ipv4Address dest,
+  void AddHostRouteTo (Ipv4Address dest, 
                        uint32_t interface);
 
   /**
@@ -134,9 +142,9 @@ public:
    *
    * \see Ipv4Address
    */
-  void AddNetworkRouteTo (Ipv4Address network,
-                          Ipv4Mask networkMask,
-                          Ipv4Address nextHop,
+  void AddNetworkRouteTo (Ipv4Address network, 
+                          Ipv4Mask networkMask, 
+                          Ipv4Address nextHop, 
                           uint32_t interface);
 
   /**
@@ -149,8 +157,8 @@ public:
    *
    * \see Ipv4Address
    */
-  void AddNetworkRouteTo (Ipv4Address network,
-                          Ipv4Mask networkMask,
+  void AddNetworkRouteTo (Ipv4Address network, 
+                          Ipv4Mask networkMask, 
                           uint32_t interface);
 
   /**
@@ -233,11 +241,10 @@ private:
   /// Set to true if packets are randomly routed among ECMP; set to false for using only one route consistently
   bool m_randomEcmpRouting;
 
-  bool m_perFlowEcmpRouting;
-
-  /// Set to true if this interface should respond to interface events by globallly recomputing routes
+  bool m_heavy_hitter_routing;
+  /// Set to true if this interface should respond to interface events by globallly recomputing routes 
   bool m_respondToInterfaceEvents;
-  /// A uniform random number generator for randomly routing packets among ECMP
+  /// A uniform random number generator for randomly routing packets among ECMP 
   Ptr<UniformRandomVariable> m_rand;
 
   /// container of Ipv4RoutingTableEntry (routes to hosts)
@@ -261,11 +268,50 @@ private:
   /// iterator of container of Ipv4RoutingTableEntry (routes to external AS)
   typedef std::list<Ipv4RoutingTableEntry *>::iterator ASExternalRoutesI;
 
-  Ptr<Ipv4Route> LookupGlobal (Ipv4Address dest, Ptr<Packet> packet, const Ipv4Header &header, uint32_t flowId, Ptr<NetDevice> oif = 0);
+
+  typedef std::map<uint32_t, uint32_t> HeavyHitterMap;
+  /// Socket list type iterator
+  typedef std::map<uint32_t, uint32_t>::iterator HeavyHitterMapI;
+  /// Socket list type const iterator
+  typedef std::map<uint32_t, uint32_t>::const_iterator HeavyHitterMapCI;
+
+  HeavyHitterMap m_heavy_hitters_on_link_map; //!< Map for heavy hitters tracking
+
+  /// container of Ipv4RoutingTableEntry (routes to networks)
+  typedef std::list<Flowlet *> FlowletList;
+  /// const iterator of container of Ipv4RoutingTableEntry (routes to networks)
+  typedef std::list<Flowlet *>::const_iterator FlowletListCI;
+  /// iterator of container of Ipv4RoutingTableEntry (routes to networks)
+  typedef std::list<Flowlet *>::iterator FlowletListI;
+
+  FlowletList m_flowlet_list;
+
+  /**
+   * \brief Lookup in the forwarding table for destination.
+   * \param dest destination address
+   * \param oif output interface if any (put 0 otherwise)
+   * \return Ipv4Route to route the packet to reach dest address
+   */
+  Ptr<Ipv4Route> LookupGlobal (Flowlet *flowlet, Ptr<NetDevice> oif = 0);
+
+  uint32_t GetHeavyHittersOnLink(uint32_t ipv4_interface);
+
+  bool IsFlowletHeavyHitter(Flowlet *flowlet);
+
+  Flowlet *GetFlowlet(uint32_t hash);
+
+  int32_t GetFlowletOutPort(Flowlet *flowlet);
+
+  void AddOrUpdateFlowlet(Flowlet *flowlet);
+
 
   HostRoutes m_hostRoutes;             //!< Routes to hosts
   NetworkRoutes m_networkRoutes;       //!< Routes to networks
   ASExternalRoutes m_ASexternalRoutes; //!< External routes imported
+
+  double m_flowlet_interval;
+
+  double m_heavy_hitters_threshold;
 
   Ptr<Ipv4> m_ipv4; //!< associated IPv4 instance
 };
