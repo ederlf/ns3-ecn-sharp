@@ -1,0 +1,15 @@
+# -*- Mode: python; py-indent-offset: 4; indent-tabs-mode: nil; coding: utf-8; -*-
+
+def build(bld):
+    obj = bld.create_ns3_program('hula-example', ['hula', 'network', 'internet', 'applications', 'point-to-point', 'bridge', 'csma'])
+    obj.source = 'hula-example.cc'
+
+    obj = bld.create_ns3_program('hula-fat-tree', ['hula', 'network', 'internet', 'nix-vector-routing', 'applications', 'point-to-point', 'bridge', 'csma'])
+    obj.source = 'hula-fat-tree.cc'
+
+    obj = bld.create_ns3_program('hula-fat-tree-no-bridge', ['hula', 'network', 'internet', 'nix-vector-routing', 'applications', 'point-to-point', 'bridge', 'csma', 'netanim'])
+    obj.source = 'hula-fat-tree-nobridge.cc'
+
+    obj = bld.create_ns3_program('hula-fat-tree-anim', ['hula', 'network', 'internet', 'nix-vector-routing', 'applications', 'point-to-point', 'bridge', 'csma', 'netanim', 'mobility'])
+    obj.source = 'hula-fat-tree-nobridge-anim.cc'
+
