@@ -349,7 +349,7 @@ TcpSocketBase::TcpSocketBase (void)
     m_retxThresh (3),
     m_limitedTx (false),
     m_retransOut (0),
-    m_ecn (true),
+    m_ecn (false),
     m_resequenceBufferEnabled (false),
     m_flowBenderEnabled (false),
     // TLB
@@ -373,6 +373,7 @@ TcpSocketBase::TcpSocketBase (void)
   m_txBuffer = CreateObject<TcpTxBuffer> ();
   m_tcb      = CreateObject<TcpSocketState> ();
 
+
   if (m_ecn)
   {
     m_tcb -> m_ecnConn = true;
@@ -381,6 +382,7 @@ TcpSocketBase::TcpSocketBase (void)
   {
     m_tcb -> m_ecnConn = false;
   }
+
 
   // Resequence Buffer support
   m_resequenceBuffer = CreateObject<TcpResequenceBuffer> ();
@@ -1614,6 +1616,7 @@ TcpSocketBase::ReceivedAck (Ptr<Packet> packet, const TcpHeader& tcpHeader)
   NS_LOG_DEBUG ("ACK of " << ackNumber <<
                 " SND.UNA=" << m_txBuffer->HeadSequence () <<
                 " SND.NXT=" << m_nextTxSequence);
+
 
   // XXX ECN Support, state goes into CA_CWR when receives ECE in TCP header
   if (m_tcb->m_ecnConn
@@ -3140,10 +3143,10 @@ TcpSocketBase::SendPendingData (bool withAck)
       uint32_t sz = SendDataPacket (m_nextTxSequence, s, withAck);
       nPacketsSent++;                             // Count sent this loop
       m_nextTxSequence += sz;                     // Advance next tx sequence
-      if (nPacketsSent == 2)
-      {
-          break;
-      }
+      // if (nPacketsSent == 2)
+      // {
+      //     break;
+      // }
     }
   if (nPacketsSent > 0)
     {
@@ -3435,7 +3438,7 @@ TcpSocketBase::NewAck (SequenceNumber32 const& ack, bool resetRTO)
                 " numberAck " << (ack - m_txBuffer->HeadSequence ())); // Number bytes ack'ed
   m_txBuffer->DiscardUpTo (ack);
   if (GetTxAvailable () > 0)
-    {
+    { 
       NotifySend (GetTxAvailable ());
     }
   if (ack > m_nextTxSequence)
